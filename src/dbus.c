@@ -1025,44 +1025,59 @@ static bool cdbus_process_win_get(session_t *ps, DBusMessage *msg) {
 }
 
 static void change_blur(session_t *ps, bool increase) {
-	struct kernel_blur_args kargs;
-	struct gaussian_blur_args gargs;
-	struct box_blur_args bargs;
-	struct dual_kawase_blur_args dkargs;
+    struct kernel_blur_args kargs;
+    struct gaussian_blur_args gargs;
+    struct box_blur_args bargs;
+    struct dual_kawase_blur_args dkargs;
 
-	void *args = NULL;
-	switch (ps->o.blur_method) {
-		case BLUR_METHOD_BOX:
-			bargs.size = ps->o.blur_radius;
-			args = (void *)&bargs;
-			break;
-		case BLUR_METHOD_KERNEL:
-			kargs.kernel_count = ps->o.blur_kernel_count;
-			kargs.kernels = ps->o.blur_kerns;
-			args = (void *)&kargs;
-			break;
-		case BLUR_METHOD_GAUSSIAN:
-			gargs.size = ps->o.blur_radius;
-			gargs.deviation = ps->o.blur_deviation;
-			args = (void *)&gargs;
-			break;
-		case BLUR_METHOD_DUAL_KAWASE:
-			dkargs.size = ps->o.blur_radius;
-			int delta = ps->o.blur_strength < 20 && ps->o.blur_strength > 0 ? 1 : 0;
-			if(!increase)
-				delta = -delta;
-			ps->o.blur_strength += delta;
-			dkargs.strength = ps->o.blur_strength;
-			printf("%d", ps->o.blur_strength);
-			args = (void *)&dkargs;
-			break;
-		default: break;
-	}
-	ps->backend_data->ops->destroy_blur_context(
-			ps->backend_data, ps->backend_blur_context);
-	ps->backend_blur_context = NULL;
+    void *args = NULL;
+    switch (ps->o.blur_method) {
+        case BLUR_METHOD_BOX:
+            bargs.size = ps->o.blur_radius;
+            args = &bargs;
+            break;
+        case BLUR_METHOD_KERNEL:
+            kargs.kernel_count = ps->o.blur_kernel_count;
+            kargs.kernels = ps->o.blur_kerns;
+            args = &kargs;
+            break;
+        case BLUR_METHOD_GAUSSIAN:
+            gargs.size = ps->o.blur_radius;
+            gargs.deviation = ps->o.blur_deviation;
+            args = &gargs;
+            break;
+        case BLUR_METHOD_DUAL_KAWASE: {
+            int MIN_STRENGTH = 2;
+            int MAX_STRENGTH = 18;
+            if (increase) {
+                if (ps->o.blur_strength < MAX_STRENGTH) {
+                    ps->o.blur_strength++;
+                }
+            } else {
+                if (ps->o.blur_strength > MIN_STRENGTH) {
+                    ps->o.blur_strength--;
+                }
+            }
+            dkargs.size = ps->o.blur_radius;
+            dkargs.strength = ps->o.blur_strength;
+            args = &dkargs;
+            break;
+        }
+        default:
+            args = NULL;
+            break;
+    }
 
-	ps->backend_blur_context = ps->backend_data->ops->create_blur_context(ps->backend_data, ps->o.blur_method, args);
+    ps->backend_data->ops->destroy_blur_context(
+        ps->backend_data, ps->backend_blur_context
+    );
+    ps->backend_blur_context = NULL;
+
+    ps->backend_blur_context = ps->backend_data->ops->create_blur_context(
+        ps->backend_data,
+        ps->o.blur_method,
+        args
+    );
 }
 
 /**
