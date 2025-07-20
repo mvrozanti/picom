@@ -708,7 +708,6 @@ static bool initialize_blur(session_t *ps) {
 	    ps->backend_data, ps->o.blur_method, args);
 	return ps->backend_blur_context != NULL;
 }
-
 /// Init the backend and bind all the window pixmap to backend images
 static bool initialize_backend(session_t *ps) {
 	if (!ps->o.legacy_backends) {

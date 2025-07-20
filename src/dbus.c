@@ -1024,6 +1024,47 @@ static bool cdbus_process_win_get(session_t *ps, DBusMessage *msg) {
 	return true;
 }
 
+static void change_blur(session_t *ps, bool increase) {
+	struct kernel_blur_args kargs;
+	struct gaussian_blur_args gargs;
+	struct box_blur_args bargs;
+	struct dual_kawase_blur_args dkargs;
+
+	void *args = NULL;
+	switch (ps->o.blur_method) {
+		case BLUR_METHOD_BOX:
+			bargs.size = ps->o.blur_radius;
+			args = (void *)&bargs;
+			break;
+		case BLUR_METHOD_KERNEL:
+			kargs.kernel_count = ps->o.blur_kernel_count;
+			kargs.kernels = ps->o.blur_kerns;
+			args = (void *)&kargs;
+			break;
+		case BLUR_METHOD_GAUSSIAN:
+			gargs.size = ps->o.blur_radius;
+			gargs.deviation = ps->o.blur_deviation;
+			args = (void *)&gargs;
+			break;
+		case BLUR_METHOD_DUAL_KAWASE:
+			dkargs.size = ps->o.blur_radius;
+			int delta = ps->o.blur_strength < 20 && ps->o.blur_strength > 0 ? 1 : 0;
+			if(!increase)
+				delta = -delta;
+			ps->o.blur_strength += delta;
+			dkargs.strength = ps->o.blur_strength;
+			printf("%d", ps->o.blur_strength);
+			args = (void *)&dkargs;
+			break;
+		default: break;
+	}
+	ps->backend_data->ops->destroy_blur_context(
+			ps->backend_data, ps->backend_blur_context);
+	ps->backend_blur_context = NULL;
+
+	ps->backend_blur_context = ps->backend_data->ops->create_blur_context(ps->backend_data, ps->o.blur_method, args);
+}
+
 /**
  * Process a win_set D-Bus request.
  */
@@ -1033,7 +1074,7 @@ static bool cdbus_process_win_set(session_t *ps, DBusMessage *msg) {
 	DBusError err = {};
 
 	if (!dbus_message_get_args(msg, &err, CDBUS_TYPE_WINDOW, &wid, DBUS_TYPE_STRING,
-	                           &target, DBUS_TYPE_INVALID)) {
+				&target, DBUS_TYPE_INVALID)) {
 		log_error("(): Failed to parse argument of \"win_set\" (%s).", err.message);
 		dbus_error_free(&err);
 		return false;
@@ -1091,6 +1132,17 @@ static bool cdbus_process_win_set(session_t *ps, DBusMessage *msg) {
 		win_set_invert_color_force(ps, w, val);
 		goto cdbus_process_win_set_success;
 	}
+
+	if (!strcmp("dec_blur_strength", target)) {
+		change_blur(ps, false);
+		goto cdbus_process_win_set_success;
+	}
+
+	if (!strcmp("inc_blur_strength", target)) {
+		change_blur(ps, true);
+		goto cdbus_process_win_set_success;
+	}
+
 #undef cdbus_m_win_set_do
 
 	log_error(CDBUS_ERROR_BADTGT_S, target);
@@ -1351,7 +1403,6 @@ static bool cdbus_process_opts_set(session_t *ps, DBusMessage *msg) {
 		force_repaint(ps);
 		goto cdbus_process_opts_set_success;
 	}
-
 	// stoppaint_force
 	cdbus_m_opts_set_do(stoppaint_force, CDBUS_TYPE_ENUM, cdbus_enum_t);
 
