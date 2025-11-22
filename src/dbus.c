@@ -1024,7 +1024,11 @@ static bool cdbus_process_win_get(session_t *ps, DBusMessage *msg) {
 	return true;
 }
 
-static void change_blur(session_t *ps, bool increase) {
+/**
+ * Recreate blur context with current blur settings.
+ * This should be called whenever blur parameters change.
+ */
+static void recreate_blur_context(session_t *ps) {
     struct kernel_blur_args kargs;
     struct gaussian_blur_args gargs;
     struct box_blur_args bargs;
@@ -1046,23 +1050,11 @@ static void change_blur(session_t *ps, bool increase) {
             gargs.deviation = ps->o.blur_deviation;
             args = &gargs;
             break;
-        case BLUR_METHOD_DUAL_KAWASE: {
-            int MIN_STRENGTH = 2;
-            int MAX_STRENGTH = 18;
-            if (increase) {
-                if (ps->o.blur_strength < MAX_STRENGTH) {
-                    ps->o.blur_strength++;
-                }
-            } else {
-                if (ps->o.blur_strength > MIN_STRENGTH) {
-                    ps->o.blur_strength--;
-                }
-            }
+        case BLUR_METHOD_DUAL_KAWASE:
             dkargs.size = ps->o.blur_radius;
             dkargs.strength = ps->o.blur_strength;
             args = &dkargs;
             break;
-        }
         default:
             args = NULL;
             break;
@@ -1078,6 +1070,25 @@ static void change_blur(session_t *ps, bool increase) {
         ps->o.blur_method,
         args
     );
+}
+
+static void change_blur(session_t *ps, bool increase) {
+    // Only dual_kawase blur method uses blur_strength
+    if (ps->o.blur_method == BLUR_METHOD_DUAL_KAWASE) {
+        // Valid range is 0-20 (0 means auto-calculate, 1-20 are valid strength levels)
+        const int MIN_STRENGTH = 0;
+        const int MAX_STRENGTH = 20;
+        if (increase) {
+            if (ps->o.blur_strength < MAX_STRENGTH) {
+                ps->o.blur_strength++;
+            }
+        } else {
+            if (ps->o.blur_strength > MIN_STRENGTH) {
+                ps->o.blur_strength--;
+            }
+        }
+    }
+    recreate_blur_context(ps);
 }
 
 /**
@@ -1155,6 +1166,26 @@ static bool cdbus_process_win_set(session_t *ps, DBusMessage *msg) {
 
 	if (!strcmp("inc_blur_strength", target)) {
 		change_blur(ps, true);
+		goto cdbus_process_win_set_success;
+	}
+
+	if (!strcmp("add_blur_strength", target)) {
+		int32_t delta = 0;
+		if (!cdbus_msg_get_arg(msg, 2, DBUS_TYPE_INT32, &delta)) {
+			return false;
+		}
+		// Only dual_kawase blur method uses blur_strength
+		if (ps->o.blur_method == BLUR_METHOD_DUAL_KAWASE) {
+			int new_strength = ps->o.blur_strength + delta;
+			// Clamp to valid range 0-20
+			if (new_strength < 0) {
+				new_strength = 0;
+			} else if (new_strength > 20) {
+				new_strength = 20;
+			}
+			ps->o.blur_strength = new_strength;
+			recreate_blur_context(ps);
+		}
 		goto cdbus_process_win_set_success;
 	}
 
@@ -1295,6 +1326,7 @@ static bool cdbus_process_opts_get(session_t *ps, DBusMessage *msg) {
 	cdbus_m_opts_get_do(blur_method, cdbus_reply_bool);
 	cdbus_m_opts_get_do(blur_background_frame, cdbus_reply_bool);
 	cdbus_m_opts_get_do(blur_background_fixed, cdbus_reply_bool);
+	cdbus_m_opts_get_do(blur_strength, cdbus_reply_int32);
 
 	cdbus_m_opts_get_do(inactive_dim, cdbus_reply_double);
 	cdbus_m_opts_get_do(inactive_dim_fixed, cdbus_reply_bool);
@@ -1420,6 +1452,48 @@ static bool cdbus_process_opts_set(session_t *ps, DBusMessage *msg) {
 	}
 	// stoppaint_force
 	cdbus_m_opts_set_do(stoppaint_force, CDBUS_TYPE_ENUM, cdbus_enum_t);
+
+	// blur_strength
+	if (!strcmp("blur_strength", target)) {
+		int32_t val = 0;
+		if (!cdbus_msg_get_arg(msg, 1, DBUS_TYPE_INT32, &val)) {
+			return false;
+		}
+		// Valid range is 0-20 (0 means auto-calculate, 1-20 are valid strength levels)
+		// Values > 20 are clamped to 20, negative values are clamped to 0
+		if (val < 0) {
+			val = 0;
+		} else if (val > 20) {
+			val = 20;
+		}
+		ps->o.blur_strength = val;
+		// Recreate blur context if blur is enabled
+		if (ps->o.blur_method != BLUR_METHOD_NONE) {
+			recreate_blur_context(ps);
+		}
+		goto cdbus_process_opts_set_success;
+	}
+
+	// add_blur_strength (add/subtract from current blur_strength)
+	if (!strcmp("add_blur_strength", target)) {
+		int32_t delta = 0;
+		if (!cdbus_msg_get_arg(msg, 1, DBUS_TYPE_INT32, &delta)) {
+			return false;
+		}
+		// Only dual_kawase blur method uses blur_strength
+		if (ps->o.blur_method == BLUR_METHOD_DUAL_KAWASE) {
+			int new_strength = ps->o.blur_strength + delta;
+			// Clamp to valid range 0-20
+			if (new_strength < 0) {
+				new_strength = 0;
+			} else if (new_strength > 20) {
+				new_strength = 20;
+			}
+			ps->o.blur_strength = new_strength;
+			recreate_blur_context(ps);
+		}
+		goto cdbus_process_opts_set_success;
+	}
 
 #undef cdbus_m_opts_set_do
 
